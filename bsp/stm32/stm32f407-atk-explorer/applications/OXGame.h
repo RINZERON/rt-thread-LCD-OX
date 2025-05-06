@@ -28,6 +28,7 @@ typedef struct {
     uint8_t current_player;   // 0:X 1:O
     uint8_t total_steps;
     GameState state;
+	rt_bool_t state_changed;
     uint8_t cursor_x, cursor_y; // π‚±ÍŒª÷√
 } OXGame;
 
@@ -36,5 +37,6 @@ void ox_game_init(void);
 void ox_game_start(void);
 void ox_game_draw_board(void);
 void ox_game_process_input(void);
+void reset_game(void);
 
 #endif

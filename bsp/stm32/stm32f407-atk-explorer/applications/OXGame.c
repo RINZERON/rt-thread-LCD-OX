@@ -22,8 +22,9 @@
 
 // 按键定义
 #define BUTTON_RIGHT GET_PIN(E, 4)  // 要有宏定义 drv_gpio.h
-#define BUTTON_LEFT  GET_PIN(E, 2)
 #define BUTTON_DOWN  GET_PIN(E, 3)
+#define BUTTON_LEFT  GET_PIN(E, 2)
+
 #define BUTTON_OK    GET_PIN(A, 0)
 
 // 同步对象
@@ -203,7 +204,8 @@ static void key_thread_entry(void *parameter)
 {
     while (1) {
         if (rt_sem_take(key_sem, RT_WAITING_FOREVER) == RT_EOK) {
-            rt_thread_mdelay(200); // 硬件消抖
+            
+			rt_thread_mdelay(20); // 硬件消抖
             
             rt_mutex_take(lcd_mutex, RT_WAITING_FOREVER);
             

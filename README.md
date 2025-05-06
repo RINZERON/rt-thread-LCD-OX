@@ -1,5 +1,7 @@
 ## STM32F407实现OX游戏（井字棋） + RT_Thread操作系统
 
+Project 文件放置在 `bsp/stm32/stm32f407-atk-explorer/`。
+Keilv5
 
 ### 2025-05-06 版本一
 能够完成放置棋子，判断三连胜利条件。

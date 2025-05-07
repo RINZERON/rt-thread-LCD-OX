@@ -271,6 +271,7 @@
 #define BSP_USING_GPIO
 #define BSP_USING_UART
 #define BSP_USING_UART1
+#define BSP_USING_UART2
 #define BSP_USING_I2C2
 #define BSP_I2C2_SCL_PIN 16
 #define BSP_I2C2_SDA_PIN 91

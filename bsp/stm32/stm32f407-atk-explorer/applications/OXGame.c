@@ -16,8 +16,8 @@
 #include <rtthread.h>
 #include <drv_gpio.h>
 
-#define CELL_SIZE      80
-#define BOARD_OFFSET_X 40
+#define CELL_SIZE      80	//格子大小
+#define BOARD_OFFSET_X 40	//棋盘xy启示点
 #define BOARD_OFFSET_Y 200
 
 // 按键定义
@@ -30,16 +30,20 @@
 
 // 串口配置
 #define UART_NAME       "uart1"    // 根据实际使用的串口修改
-#define CMD_BUF_SIZE    32
+#define CMD_BUF_SIZE    256
 
 
 
 // 同步对象
 static rt_sem_t key_sem;
 static rt_mutex_t lcd_mutex;
+static  rt_sem_t uart_rx_sem;
+static struct rt_ringbuffer *cmd_rb;
+
+
 static OXGame game;
 static rt_device_t lcd_dev;
-static struct rt_ringbuffer *cmd_rb;
+
 
 
 
@@ -53,18 +57,24 @@ static const rt_uint16_t color_table[] = {
 };
 
 
-/* 串口接收回调 */
+/* 串口接收回调 ：读字节→放环形缓冲区→发信号 */
 static rt_err_t uart_rx_ind(rt_device_t dev, rt_size_t size)
 {
-    static rt_uint8_t buf[CMD_BUF_SIZE];
-    rt_size_t rb_len = rt_ringbuffer_put(cmd_rb, buf, rt_device_read(dev, 0, buf, size));
-    return RT_EOK;
+	char ch;
+	while (rt_device_read(dev, 0, &ch, 1) == 1)
+    {
+        rt_ringbuffer_putchar(cmd_rb, (rt_uint8_t)ch);
+    }
+	
+    /* 释放接收信号量 */
+    rt_sem_release(uart_rx_sem);
+    
+	return RT_EOK;
 }
 
 
 
-
-/* 中断服务函数 */
+/* 按键中断服务函数 */
 static void button_isr(void *args)
 {
     rt_base_t pin = (rt_base_t)args;
@@ -96,24 +106,81 @@ static void button_init(void)
 }
 
 
-static void reset_game(void)
+
+
+static void reset_game(ResetType type)
 {
-	rt_err_t result;
-	result = rt_mutex_take(lcd_mutex, RT_WAITING_FOREVER); 
+    rt_mutex_take(lcd_mutex, RT_WAITING_FOREVER);
+    
+
+    // 公共重置部分
+    game.cursor_x = 1;
+    game.cursor_y = 1;
+    game.total_steps = 0;
+	game.player_x.symbol = 'x';
+	game.player_o.symbol = 'o';
+    game.state = GAME_PLAYING;
+    game.current_player = 0;
+    rt_memset(game.board, 0, sizeof(game.board));
+    game.state_changed = 1;
+    
 	
-	// 初始化游戏状态
-    if(result == RT_EOK){
-		rt_memset(&game, 0, sizeof(OXGame));
-		game.player_x.symbol = 'X';
-		game.player_o.symbol = 'O';
-		game.current_player = 0;
-		game.cursor_x = 1;
-		game.cursor_y = 1;
-		game.state = GAME_PLAYING;	//重置游戏状态
-		game.state_changed = 1; // 初始需要刷新
-		rt_mutex_release(lcd_mutex);	//释放锁
-	}
+	 if (type == RESET_FULL) {
+        // 完全重置时清除玩家信息
+        rt_memset(game.player_x.name, 0, sizeof(game.player_x.name));
+        rt_memset(game.player_o.name, 0, sizeof(game.player_o.name));
+		//	玩家名称
+		input_player_name(&game.player_x);
+		input_player_name(&game.player_o);
+    }
+	
+    rt_mutex_release(lcd_mutex);
 }
+
+
+
+/*  从环形缓冲区组装玩家名 */
+static void input_player_name(Player *player)
+{
+    char buf[16] = {0};
+    rt_uint8_t len = 0;
+    char ch;
+	
+	
+	rt_kprintf("Please input %c's name (max 15 chars):\n", player->symbol);
+	
+	
+	    // 清空旧数据
+    rt_ringbuffer_reset(cmd_rb);
+	
+	while (len < sizeof(buf) - 1)
+    {
+        if (rt_ringbuffer_getchar(cmd_rb, (rt_uint8_t *)&ch) <= 0)
+        {
+            rt_sem_take(uart_rx_sem, RT_WAITING_FOREVER);
+            continue;
+        }
+		// len = 0 默认是\n
+        if ( len > 0 && (ch == '\r' || ch == '\n'))
+		{
+			break;
+		}
+		if (len == 0 && (ch == '\r' || ch == '\n'))
+		{
+			continue;
+		}
+        buf[len++] = ch;
+        rt_kprintf("%c", ch);
+    }
+    buf[len] = '\0';
+    rt_strncpy(player->name, buf, sizeof(player->name));
+    rt_kprintf("\nName set: %s\n", player->name);
+    
+}
+
+
+
+
 
 
 /* 游戏初始化 */
@@ -122,13 +189,17 @@ void ox_game_init(void)
     // 初始化同步对象
     key_sem = rt_sem_create("key_sem", 0, RT_IPC_FLAG_FIFO);
     lcd_mutex = rt_mutex_create("lcd_mutex", RT_IPC_FLAG_FIFO);
+	uart_rx_sem = rt_sem_create("uart_rx_sem", 0, RT_IPC_FLAG_FIFO);
+	
 	cmd_rb = rt_ringbuffer_create(CMD_BUF_SIZE);
     
     // 初始化串口
-    rt_device_t uart = rt_device_find(UART_NAME);
-    RT_ASSERT(uart != RT_NULL);
-    rt_device_open(uart, RT_DEVICE_FLAG_INT_RX);
-    rt_device_set_rx_indicate(uart, uart_rx_ind);
+    rt_device_t uart_device = rt_device_find(UART_NAME);
+    RT_ASSERT(uart_device != RT_NULL);
+	// 以中断接收方式打开串口设备
+    rt_device_open(uart_device, RT_DEVICE_FLAG_INT_RX);
+    // 设置接受回调函数 只能是rt_err_t uart_rx_ind
+	rt_device_set_rx_indicate(uart_device, uart_rx_ind);
 	
 	
 	// 初始化硬件
@@ -136,12 +207,21 @@ void ox_game_init(void)
     lcd_dev = rt_device_find("lcd");
     RT_ASSERT(lcd_dev != RT_NULL);
     rt_device_init(lcd_dev);
+	
+	
+	LCD_Clear(WHITE);
+	
+
 
 	// 初始化游戏状态
-	reset_game();
+	reset_game(RESET_FULL);
    
-    LCD_Clear(WHITE);
+    
 }
+
+
+
+
 
 
 
@@ -190,6 +270,22 @@ void ox_game_draw_board(void)
             }
         }
     }
+	
+	
+	 // 新增玩家信息显示
+    char info_buf[40];
+    
+	// 显示玩家X信息
+    rt_snprintf(info_buf, sizeof(info_buf), "X: %s", game.player_x.name);
+    LCD_ShowString(300, 50, 200, 24, 24, (rt_uint8_t*)info_buf);
+	
+	// 显示玩家O信息
+    rt_snprintf(info_buf, sizeof(info_buf), "O: %s", game.player_o.name);
+    LCD_ShowString(300, 100, 200, 24, 24, (rt_uint8_t*)info_buf);
+    // 显示当前玩家
+    rt_snprintf(info_buf, sizeof(info_buf), "Current: %c", 
+			game.current_player ? game.player_o.symbol : game.player_x.symbol);
+    LCD_ShowString(300, 150, 200, 24, 24, (rt_uint8_t*)info_buf);
 
 	char *msg = "";
 	msg = "move:wasd";
@@ -198,6 +294,8 @@ void ox_game_draw_board(void)
 	LCD_ShowString(300, 250, 600, 24, 24, (rt_uint8_t*)msg);
 	msg = "reset game:r";
 	LCD_ShowString(300, 300, 600, 24, 24, (rt_uint8_t*)msg);
+	msg = "reset curr:c";
+	LCD_ShowString(300, 350, 600, 24, 24, (rt_uint8_t*)msg);
 	
 	
     // 绘制光标
@@ -346,7 +444,7 @@ static void lcd_thread_entry(void *parameter)
 				
 				rt_mutex_release(lcd_mutex); // 释放锁允许其他操作
 				rt_thread_mdelay(2000);     // 显示消息2秒
-				reset_game();                // 重置游戏
+				reset_game(RESET_CURRENT);                // 重置游戏
 				rt_mutex_take(lcd_mutex, RT_WAITING_FOREVER);
 			}
 			
@@ -364,36 +462,58 @@ static void lcd_thread_entry(void *parameter)
 /* 指令处理线程 */
 static void cmd_thread_entry(void *parameter)
 {
-    char cmd;
+    rt_err_t result;
+
+	rt_device_t uart_device = rt_device_find(UART_NAME);
+	
     while (1) {
-        if (rt_ringbuffer_getchar(cmd_rb, (rt_uint8_t *)&cmd) > 0) {
-            rt_mutex_take(lcd_mutex, RT_WAITING_FOREVER);
+        
+		
+		/* 等待串口接收信号量 */
+        rt_sem_take(uart_rx_sem, RT_WAITING_FOREVER);
+
+		
+		
+        /* 处理缓冲区中的所有可用指令 */
+        while (1) {
+            char cmd;
+            int count = rt_ringbuffer_getchar(cmd_rb, (rt_uint8_t*)&cmd);
             
+            if (count <= 0) break;  // 缓冲区无数据时退出循环
+
+            /* 获取LCD互斥锁 */
+            result = rt_mutex_take(lcd_mutex, RT_WAITING_FOREVER);
+            if (result != RT_EOK) {
+                rt_kprintf("Take LCD mutex failed!\n");
+                continue;
+            }
+
+            /* 执行指令处理 */
             switch (cmd) {
             case 'a': // 左移
                 game.cursor_x = (game.cursor_x == 0) ? 2 : (game.cursor_x - 1);
                 game.state_changed = 1;
-				rt_kprintf("左移一格\n");
+                rt_kprintf("[CMD] Left move to [%d,%d]\n", game.cursor_x, game.cursor_y);
                 break;
-                
+
             case 'd': // 右移
                 game.cursor_x = (game.cursor_x + 1) % 3;
                 game.state_changed = 1;
-				rt_kprintf("右移一格\n");
+                rt_kprintf("[CMD] Right move to [%d,%d]\n", game.cursor_x, game.cursor_y);
                 break;
-                
+
             case 's': // 下移
                 game.cursor_y = (game.cursor_y < 2) ? (game.cursor_y + 1) : 0;
                 game.state_changed = 1;
-				rt_kprintf("下移一格\n");
+                rt_kprintf("[CMD] Down move to [%d,%d]\n", game.cursor_x, game.cursor_y);
                 break;
-                
+
             case 'w': // 上移
                 game.cursor_y = (game.cursor_y == 0) ? 2 : (game.cursor_y - 1);
                 game.state_changed = 1;
-				rt_kprintf("上移一格\n");
+                rt_kprintf("[CMD] Up move to [%d,%d]\n", game.cursor_x, game.cursor_y);
                 break;
-                
+
             case 'e': // 确认落子
                 if (game.board[game.cursor_x][game.cursor_y] == 0 && 
                     game.state == GAME_PLAYING) 
@@ -403,19 +523,38 @@ static void cmd_thread_entry(void *parameter)
                     game.state = check_win();
                     game.current_player = !game.current_player;
                     game.state_changed = 1;
-					rt_kprintf("确认落子在[x,y]=[%d,%d]\n",game.cursor_x,game.cursor_y);
+                    rt_kprintf("[CMD] Place piece at [%d,%d]\n", game.cursor_x, game.cursor_y);
                 }
                 break;
-                
-            case 'r': // 重置游戏
-                reset_game();
-				rt_kprintf("重置游戏\n");
+
+            case 'r': // 重置游戏（完全重置）
+                reset_game(RESET_FULL);
+                rt_kprintf("[CMD] Full reset executed\n");
+                break;
+
+            case 'c': // 新增：重置当前游戏（保留玩家信息）
+                reset_game(RESET_CURRENT);
+                rt_kprintf("[CMD] Current game reset\n");
+                break;
+
+			case '\n':	// 处理换行
+				break;
+			case '\r':	// 处理回车
+				break;
+			
+            default:  // 无效指令处理
+                rt_kprintf("[CMD] Invalid command: 0x%02X\n", cmd);
                 break;
             }
-            
+
+            /* 释放互斥锁 */
             rt_mutex_release(lcd_mutex);
         }
-        rt_thread_mdelay(10);
+		
+		rt_sem_release(uart_rx_sem);
+
+        /* 短暂释放CPU */
+        rt_thread_mdelay(5);
     }
 }
 
@@ -426,18 +565,24 @@ static void cmd_thread_entry(void *parameter)
 void ox_game_start(void)
 {
     ox_game_init();
+	
+
     
     rt_thread_t key_tid = rt_thread_create("key_th", key_thread_entry, 
-                                        NULL, 1024, 7, 10);
+                                        NULL, 1024, 10, 10);
     rt_thread_t lcd_tid = rt_thread_create("lcd_th", lcd_thread_entry,
-                                        NULL, 2048, 8, 10);
+                                        NULL, 2048, 11, 10);
                                         
 	rt_thread_t cmd_tid = rt_thread_create("cmd_th", cmd_thread_entry, 
-                                         NULL, 1024, 6, 10);
+                                         NULL, 1024, 7, 10);
 	
     rt_thread_startup(key_tid);
     rt_thread_startup(lcd_tid);
 	rt_thread_startup(cmd_tid);
+	
+	
+
+	
 }
 
 MSH_CMD_EXPORT(ox_game_start, Start OX Game);

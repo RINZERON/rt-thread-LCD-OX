@@ -13,11 +13,18 @@ typedef enum {
     GAME_DRAW
 } GameState;
 
+// 重置游戏状态枚举
+typedef enum {
+    RESET_CURRENT,  // 仅重置游戏状态
+    RESET_FULL      // 完全重置（含玩家信息）
+} ResetType;
+
 // 玩家结构体
 typedef struct {
     char symbol;
     uint8_t positions[3][2]; // 保存棋子位置[x,y]
     uint8_t move_step;
+	char name[16];	//用于存放玩家名称
 } Player;
 
 // 游戏主结构体
@@ -37,7 +44,7 @@ void ox_game_init(void);
 void ox_game_start(void);
 void ox_game_draw_board(void);
 void ox_game_process_input(void);
-void reset_game(void);
-
+void reset_game(ResetType type);
+void input_player_name(Player *player);
 
 #endif

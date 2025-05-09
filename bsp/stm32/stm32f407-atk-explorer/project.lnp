@@ -3,6 +3,7 @@
 ".\thread_sample.o"
 ".\lcd_sample.o"
 ".\oxgame.o"
+".\uart_sample.o"
 ".\syscall_mem.o"
 ".\syscalls.o"
 ".\cctype.o"

@@ -30,7 +30,7 @@
 
 // 串口配置
 #define UART_NAME       "uart1"    // 根据实际使用的串口修改
-#define CMD_BUF_SIZE    256
+#define CMD_BUF_SIZE    16
 
 
 
@@ -52,7 +52,7 @@ static rt_device_t lcd_dev;
 // 颜色定义
 static const rt_uint16_t color_table[] = {
     [0] = WHITE,    // 空
-    [1] = BRRED,    // X
+    [1] = GGREEN,    // X
     [2] = BLUE      // O
 };
 
@@ -123,17 +123,27 @@ static void reset_game(ResetType type)
     game.current_player = 0;
     rt_memset(game.board, 0, sizeof(game.board));
     game.state_changed = 1;
-    
 	
-	 if (type == RESET_FULL) {
+	LCD_Clear(WHITE);
+	
+	char *p = "X and O name:";
+	LCD_ShowString(40, 150, 600, 24, 24, (rt_uint8_t*)p);
+	
+	if (type == RESET_FULL) {
         // 完全重置时清除玩家信息
         rt_memset(game.player_x.name, 0, sizeof(game.player_x.name));
         rt_memset(game.player_o.name, 0, sizeof(game.player_o.name));
 		//	玩家名称
 		input_player_name(&game.player_x);
 		input_player_name(&game.player_o);
-    }
+		
+	}
 	
+	LCD_ShowString(40, 200, 600, 24, 24, (rt_uint8_t*)game.player_x.name);
+	LCD_ShowString(40, 250, 600, 24, 24, (rt_uint8_t*)game.player_o.name);
+	// 多延时一段时间用于显示
+	rt_thread_mdelay(2000);
+	 
     rt_mutex_release(lcd_mutex);
 }
 
@@ -161,16 +171,25 @@ static void input_player_name(Player *player)
             continue;
         }
 		// len = 0 默认是\n
-        if ( len > 0 && (ch == '\r' || ch == '\n'))
+//        if ( len > 0 && (ch == '\r' || ch == '\n'))
+//		{
+//			break;
+//		}
+//		if (len == 0 && (ch == '\r' || ch == '\n'))
+//		{
+//			continue;
+//		}
+		
+		if(ch == '\r' || ch == '\n')
 		{
-			break;
+			if(len > 0){
+				break;
+			}
+			else continue;	//跳出这个阶段的while 不执行后续的 buf[len++] = ch(\n or \r);...
 		}
-		if (len == 0 && (ch == '\r' || ch == '\n'))
-		{
-			continue;
-		}
+		
         buf[len++] = ch;
-        rt_kprintf("%c", ch);
+        rt_kprintf("%c !!!", ch);
     }
     buf[len] = '\0';
     rt_strncpy(player->name, buf, sizeof(player->name));
@@ -251,6 +270,11 @@ static void draw_piece(rt_uint8_t x, rt_uint8_t y, rt_uint16_t color)
     if(color == color_table[1]) { // 画X
         LCD_DrawLine((rt_uint16_t[]){color}, px-20, py-20, px+20, py+20);
         LCD_DrawLine((rt_uint16_t[]){color}, px+20, py-20, px-20, py+20);
+		
+		// 画粗线
+		LCD_DrawThickLine(color, px-20, py-20, px+20, py+20, 5);
+		LCD_DrawThickLine(color, px+20, py-20, px-20, py+20, 5);
+		
     } else if (color == color_table[2]) { // 画O
         LCD_DrawCircle(px, py, 20, color);
     }

@@ -18,7 +18,7 @@
 
 #include <drv_gpio.h>
 #include <string.h>
-
+#include <math.h>
 
 //#define DRV_DEBUG
 #define LOG_TAG "drv.lcd"
@@ -577,6 +577,41 @@ void LCD_DrawLine(const uint16_t *pixel, rt_uint16_t x1, rt_uint16_t y1, rt_uint
         }
     }
 }
+
+
+
+
+// 在两点 (x0,y0)-(x1,y1) 之间画一条 thickness 像素宽的粗线
+void LCD_DrawThickLine(rt_uint16_t color,
+                       uint16_t x0, uint16_t y0,
+                       uint16_t x1, uint16_t y1,
+                       uint16_t thickness)
+{
+    // 方向向量
+    uint16_t dx = x1 - x0;
+    uint16_t dy = y1 - y0;
+    // 线长
+    float len = sqrtf(dx*dx + dy*dy);
+    if (len == 0) return;
+
+    // 单位法向量 = (-dy, dx) / len
+    float nx = -dy / len;
+    float ny =  dx / len;
+
+    // 在法向量方向上偏移若干条线
+    uint16_t half = thickness / 2;
+    for(int t = -half; t <= half; t++)
+    {
+        uint16_t ox = (uint16_t)roundf(nx * t);
+        uint16_t oy = (uint16_t)roundf(ny * t);
+        LCD_DrawLine((rt_uint16_t[]){color},
+                     x0 + ox, y0 + oy,
+                     x1 + ox, y1 + oy);
+    }
+}
+
+
+
 
 // 绘制水平线
 // 参数：pixel - 颜色值指针

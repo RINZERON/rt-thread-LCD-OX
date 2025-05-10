@@ -113,6 +113,9 @@ typedef struct
 #define BROWN 			 0XBC40 //棕色
 #define BRRED 			 0XFC07 //棕红色
 #define GRAY  			 0X8430 //灰色
+#define GGREEN           0X6400	//深绿色
+
+
 //GUI颜色
 
 #define DARKBLUE      	 0X01CF	//深蓝色
@@ -161,5 +164,6 @@ void LCD_Clear(uint16_t color);
 void LCD_DrawLine(const uint16_t *pixel, rt_uint16_t x1, rt_uint16_t y1, rt_uint16_t x2, rt_uint16_t y2);
 void LCD_DrawCircle(uint16_t x0, uint16_t y0, uint16_t r, uint16_t color);	// 画圆
 void LCD_DrawRect(uint16_t x, uint16_t y, uint16_t width, uint16_t height, uint16_t color);	//空心矩形
+void LCD_DrawThickLine(rt_uint16_t color,uint16_t x0, uint16_t y0,uint16_t x1, uint16_t y1,uint16_t thickness); // 打印粗线条
 
 #endif
